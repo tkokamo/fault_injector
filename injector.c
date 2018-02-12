@@ -3,6 +3,7 @@
 #include <linux/namei.h>
 #include <linux/kprobes.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 
 static struct task_struct *tasks[8092];
 static int num;
@@ -10,7 +11,7 @@ static int num;
 unsigned long tgt_sym;
 module_param(tgt_sym, ulong, 0644);
 
-static bool is_target()
+static bool is_target(void)
 {
 	struct task_struct *task = NULL;
 	int i = 0;
@@ -70,6 +71,36 @@ static struct kretprobe krp_kern_path = {
 	},
 };
 
+static int ent_kmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	if (!is_target())
+		return 1;
+	return 0;
+}
+
+static int ret_kmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	void *rp = (void *)regs_return_value(regs);
+
+	if (rp == NULL)
+		return 0;
+
+	printk("%p %lu\n", rp, regs->ax);
+	kmem_cache_free(rp);
+	regs->ax = (unsigned long)NULL;
+	return 0;
+}
+
+static struct kretprobe krp_kmalloc = {
+	.handler		= ret_kmalloc,
+	.entry_handler		= ent_kmalloc,
+	.data_size		= sizeof(struct path *),
+	.maxactive		= 20,
+	.kp = {
+		.symbol_name    = "kmem_cache_alloc",
+	},
+};
+
 static int ent_tgt(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	tasks[num] = current;
@@ -89,7 +120,7 @@ static struct kretprobe krp_tgt = {
 	.entry_handler		= ent_tgt,
 };
 
-static int __init target_init(void)
+static int __init injector_init(void)
 {
 	int rc;
 
@@ -108,17 +139,26 @@ static int __init target_init(void)
 		printk(KERN_ERR "register_kretprobe() failed.\n");
 		unregister_kretprobe(&krp_tgt);
 	}
+	
+	rc = register_kretprobe(&krp_kmalloc);
+	if (rc < 0) {
+		printk(KERN_ERR "register_kretprobe() failed.\n");
+		unregister_kretprobe(&krp_kern_path);
+		unregister_kretprobe(&krp_tgt);
+	}
+
 out:
 	return rc;
 }
 
-static void __exit target_exit(void)
+static void __exit injector_exit(void)
 {
+	unregister_kretprobe(&krp_kmalloc);
 	unregister_kretprobe(&krp_kern_path);
 	unregister_kretprobe(&krp_tgt);
 }
 
-module_init(target_init);
-module_exit(target_exit);
+module_init(injector_init);
+module_exit(injector_exit);
 
 MODULE_LICENSE("GPL");

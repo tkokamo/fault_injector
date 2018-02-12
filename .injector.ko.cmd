@@ -1,0 +1,1 @@
+cmd_/root/git/fault_injector/injector.ko := ld -r -m elf_x86_64 -T ./scripts/module-common.lds --build-id  -o /root/git/fault_injector/injector.ko /root/git/fault_injector/injector.o /root/git/fault_injector/injector.mod.o

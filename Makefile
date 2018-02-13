@@ -6,4 +6,4 @@ VERBOSE = 0
 default:
 	$(MAKE) -C $(KERNEL_DIR) KBUILD_VERBOSE=$(VERBOSE) M=$(PWD) modules
 clean:
-	rm -f *.o *.ko Module.symvers *.mod.c modules.order
+	rm -rf *.o *.ko Module.symvers *.mod.c modules.order .tmp_versions

@@ -35,27 +35,32 @@ static bool is_target(void)
 
 static int ent_kern_path(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	struct path *path;
+	struct path **ppath;
 
 	if (!is_target())
 		return 1;
 
-	path = (struct path *)ri->data;
-	path = (struct path *)regs->dx;
+	printk("EK ax:%lx, bx:%lx, cx:%lx, dx:%lx, di:%lx, si:%lx\n",
+			regs->ax, regs->bx, regs->cx, regs->dx, regs->di, regs->si);
 
+	ppath = (struct path **)ri->data;
+	*ppath = (struct path *)regs->dx;
+
+	printk("EK path:%p\n", *ppath);
 	return 0;
 }
 
 static int ret_kern_path(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	struct path *path;
+	struct path **ppath;
 	int rc = regs_return_value(regs);
 
 	if (rc < 0)
 		return 0;
 
-	path = (struct path *)ri->data;
-	path_put(path);
+	ppath = (struct path **)ri->data;
+	printk("RK path:%p\n", *ppath);
+	path_put(*ppath);
 	regs->ax = -ENOMEM;
 
 	return 0;
@@ -71,33 +76,84 @@ static struct kretprobe krp_kern_path = {
 	},
 };
 
-static int ent_kmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
+static int ent_kmem_cache_alloc(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
+	struct kmem_cache **pcachep;
+
 	if (!is_target())
 		return 1;
+
+	pcachep = (struct kmem_cache **)ri->data;
+	*pcachep = (struct kmem_cache *)regs->di;
+
+	printk("EKM ax:%lx, bx:%lx, cx:%lx, dx:%lx, di:%lx, si:%lx\n",
+			regs->ax, regs->bx, regs->cx, regs->dx, regs->di, regs->si);
+
 	return 0;
 }
 
-static int ret_kmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
+static int ret_kmem_cache_alloc(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
+	struct kmem_cache **pcachep;
 	void *rp = (void *)regs_return_value(regs);
+	unsigned long *sp = NULL;
 
 	if (rp == NULL)
 		return 0;
 
-	printk("%p %lu\n", rp, regs->ax);
-	kmem_cache_free(rp);
+	pcachep = (struct kmem_cache **)ri->data;
+	printk("RKM %p %p %lx\n", *pcachep, rp, regs->ax);
+	kmem_cache_free(*pcachep, rp);
 	regs->ax = (unsigned long)NULL;
+
+	sp = (unsigned long *)regs->sp;
+	sp[10] = (unsigned long)NULL;
+
 	return 0;
 }
 
-static struct kretprobe krp_kmalloc = {
-	.handler		= ret_kmalloc,
-	.entry_handler		= ent_kmalloc,
-	.data_size		= sizeof(struct path *),
+static struct kretprobe krp_kmem_cache_alloc = {
+	.handler		= ret_kmem_cache_alloc,
+	.entry_handler		= ent_kmem_cache_alloc,
+	.data_size		= sizeof(struct kmem_cache *),
 	.maxactive		= 20,
 	.kp = {
 		.symbol_name    = "kmem_cache_alloc",
+	},
+};
+
+static int ent___kmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	if (!is_target())
+		return 1;
+
+	printk("E_KM ax:%lx, bx:%lx, cx:%lx, dx:%lx, di:%lx, si:%lx\n",
+			regs->ax, regs->bx, regs->cx, regs->dx, regs->di, regs->si);
+
+	return 0;
+}
+
+static int ret___kmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	void *rp = (void *)regs_return_value(regs);
+	unsigned long *sp = NULL;
+
+	if (rp == NULL)
+		return 0;
+
+	kfree(rp);
+	regs->ax = (unsigned long)NULL;
+	sp = (unsigned long *)regs->sp;
+	sp[10] = (unsigned long)NULL;
+	return 0;
+}
+
+static struct kretprobe krp___kmalloc = {
+	.handler		= ret___kmalloc,
+	.entry_handler		= ent___kmalloc,
+	.maxactive		= 20,
+	.kp = {
+		.symbol_name    = "__kmalloc",
 	},
 };
 
@@ -137,23 +193,36 @@ static int __init injector_init(void)
 	rc = register_kretprobe(&krp_kern_path);
 	if (rc < 0) {
 		printk(KERN_ERR "register_kretprobe() failed.\n");
-		unregister_kretprobe(&krp_tgt);
+		goto unreg_tgt;
 	}
 	
-	rc = register_kretprobe(&krp_kmalloc);
+	rc = register_kretprobe(&krp_kmem_cache_alloc);
 	if (rc < 0) {
 		printk(KERN_ERR "register_kretprobe() failed.\n");
-		unregister_kretprobe(&krp_kern_path);
-		unregister_kretprobe(&krp_tgt);
+		goto unreg_kern;
 	}
 
+	rc = register_kretprobe(&krp___kmalloc);
+	if (rc < 0) {
+		printk(KERN_ERR "register_kretprobe() failed.\n");
+		goto unreg_kmem;
+	}
+
+	return 0;
+unreg_kmem:
+	unregister_kretprobe(&krp_kmem_cache_alloc);
+unreg_kern:
+	unregister_kretprobe(&krp_kern_path);
+unreg_tgt:
+	unregister_kretprobe(&krp_tgt);
 out:
 	return rc;
 }
 
 static void __exit injector_exit(void)
 {
-	unregister_kretprobe(&krp_kmalloc);
+	unregister_kretprobe(&krp___kmalloc);
+	unregister_kretprobe(&krp_kmem_cache_alloc);
 	unregister_kretprobe(&krp_kern_path);
 	unregister_kretprobe(&krp_tgt);
 }

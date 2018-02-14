@@ -1,18 +1,25 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/namei.h>
-#include <linux/kprobes.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/kthread.h>
+#include <linux/kallsyms.h>
 
 static struct task_struct *tasks[8092];
 static int num;
+static wait_queue_head_t tgtq;
 
-unsigned long tgt_sym;
-module_param(tgt_sym, ulong, 0644);
+struct kretprobe *fault_lists[] = {
+	&krp_kern_path,
+	&krp_kthread_run,
+	&krp_kmem_cache_alloc,
+	&krp___kmalloc,
+	&krp_vmalloc,
+	&krp___vmalloc,
+	&krp_vmalloc_user,
+};
 
-static bool is_target(void)
+bool is_target(void)
 {
 	struct task_struct *task = NULL;
 	int i = 0;
@@ -72,165 +79,6 @@ static struct kretprobe krp_kern_path = {
 	},
 };
 
-static int ent_kmem_cache_alloc(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	struct kmem_cache **pcachep;
-
-	if (!is_target())
-		return 1;
-
-	pcachep = (struct kmem_cache **)ri->data;
-	*pcachep = (struct kmem_cache *)regs->di;
-	
-	return 0;
-}
-
-static int ret_kmem_cache_alloc(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	struct kmem_cache **pcachep;
-	void *rp = (void *)regs_return_value(regs);
-
-	if (rp == NULL)
-		return 0;
-
-	pcachep = (struct kmem_cache **)ri->data;
-	kmem_cache_free(*pcachep, rp);
-	regs->ax = (unsigned long)NULL;
-
-	return 0;
-}
-
-static struct kretprobe krp_kmem_cache_alloc = {
-	.handler		= ret_kmem_cache_alloc,
-	.entry_handler		= ent_kmem_cache_alloc,
-	.data_size		= sizeof(struct kmem_cache *),
-	.maxactive		= 20,
-	.kp = {
-		.symbol_name    = "kmem_cache_alloc",
-	},
-};
-
-static int ent___kmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	if (!is_target())
-		return 1;
-
-	return 0;
-}
-
-static int ret___kmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	void *rp = (void *)regs_return_value(regs);
-	unsigned long *sp = NULL;
-
-	if (rp == NULL)
-		return 0;
-
-	kfree(rp);
-	regs->ax = (unsigned long)NULL;
-	sp = (unsigned long *)regs->sp;
-	sp[10] = (unsigned long)NULL;
-	return 0;
-}
-
-static struct kretprobe krp___kmalloc = {
-	.handler		= ret___kmalloc,
-	.entry_handler		= ent___kmalloc,
-	.maxactive		= 20,
-	.kp = {
-		.symbol_name    = "__kmalloc",
-	},
-};
-
-static int ent___vmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	if (!is_target())
-		return 1;
-	
-	return 0;
-}
-
-static int ret___vmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	void *rp = (void *)regs_return_value(regs);
-
-	if (rp == NULL)
-		return 0;
-
-	vfree(rp);
-	regs->ax = (unsigned long)NULL;
-
-	return 0;
-}
-
-static struct kretprobe krp___vmalloc = {
-	.handler		= ret___vmalloc,
-	.entry_handler		= ent___vmalloc,
-	.maxactive		= 20,
-	.kp = {
-		.symbol_name    = "__vmalloc",
-	},
-};
-
-static int ent_vmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	if (!is_target())
-		return 1;
-	
-	return 0;
-}
-
-static int ret_vmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	void *rp = (void *)regs_return_value(regs);
-
-	if (rp == NULL)
-		return 0;
-
-	vfree(rp);
-	regs->ax = (unsigned long)NULL;
-
-	return 0;
-}
-
-static struct kretprobe krp_vmalloc = {
-	.handler		= ret_vmalloc,
-	.entry_handler		= ent_vmalloc,
-	.maxactive		= 20,
-	.kp = {
-		.symbol_name    = "vmalloc",
-	},
-};
-
-static int ent_vmalloc_user(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	if (!is_target())
-		return 1;
-	return 0;
-}
-
-static int ret_vmalloc_user(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	void *rp = (void *)regs_return_value(regs);
-
-	if (rp == NULL)
-		return 0;
-
-	vfree(rp);
-	regs->ax = (unsigned long)NULL;
-
-	return 0;
-}
-
-static struct kretprobe krp_vmalloc_user = {
-	.handler		= ret_vmalloc_user,
-	.entry_handler		= ent_vmalloc_user,
-	.maxactive		= 20,
-	.kp = {
-		.symbol_name    = "vmalloc_user",
-	},
-};
-
 static int ent_kthread_run(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	if (!is_target())
@@ -279,82 +127,106 @@ static struct kretprobe krp_tgt = {
 	.entry_handler		= ent_tgt,
 };
 
+static int inject_fault(unsigned long arg)
+{
+	int rc = 0;
+	int i;
+	int num;
+	struct fault_injector *fi;
+	struct kretprobe *krp = NULL;
+
+	fi = kmalloc(sizeof(fault_injector), GFP_KERNEL);
+	if (fi == NULL) {
+		printk("Can not allocate fi memory.\n");
+		rc = -ENOMEM;
+		goto out;
+	}
+
+	if (copy_from_user(fi, arg, sizeof(struct fault_injector))) {
+		printk("Bad argument address passed.\n");
+		rc = -EFAULT;
+		goto free_fi;
+	}
+
+	num = sizeof(fault_lists) / sizeof(struct kretprobe *);
+	for (i = 0; i < num; i++) {
+		krp = fault_lists[i];
+		if (!strcmp(krp.kp.symbol_name, fi->target)) {
+			break;	
+		}
+	}
+	if (krp == NULL) {
+		printk("Invalid fault function passed.\n");
+		rc = -EINVAL;
+		goto free_fi;
+	}
+
+	rc = register_kretprobe(krp);
+	if (rc < 0) {
+		printk("registering fault function failed.\n");
+		goto free_fi;
+	}
+
+	krp_tgt.rp.symbol_name = fi->target;
+	rc = register_kretprobe(&krp_tgt);
+	if (rc < 0) {
+		printk("registering target function failed.\n");
+		goto free_fi;
+	}
+
+unreg_fault:
+	unregister_kretprobe(krp);
+free_fi:
+	kfree(fi);
+out:
+	return rc;
+}
+
+static long
+fault_inject_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	int rc = 0;
+	switch (cmd) {
+	case FAULT_INJECT:
+		rc = inject_fault(arg);
+	default:
+		printk("Invalid cmd.\n");
+		rc = -EINVAL;
+	}
+
+	return rc;
+}
+
+static struct file_operations fault_inject_fops = {
+    .unlocked_ioctl = fault_inject_ioctl,
+};
+
 static int __init injector_init(void)
 {
 	int rc;
+	int num;
+	struct kretprobe *krp;
 
-	if (tgt_sym == 0) {
-		return -EINVAL;
-	}
-	krp_tgt.kp.addr = (kprobe_opcode_t *)tgt_sym;
+	/*TODO register device */
 
-	rc = register_kretprobe(&krp_tgt);
-	if (rc < 0) {
-		printk(KERN_ERR "register_kretprobe() failed.\n");
-		goto out;	
-	}
-/*
-	rc = register_kretprobe(&krp_kern_path);
-	if (rc < 0) {
-		printk(KERN_ERR "register_kretprobe() failed.\n");
-		goto unreg_tgt;
+	num = sizeof(fault_lists) / sizeof(struct kretprobe *);
+	for (i = 0; i < num; i++) {
+		krp = fault_lists[i];
+		rc = kallsyms_lookup_name(krp.kp.symbol_name);
+		if (rc == 0) {
+			printk("Invalid symbol %s is in the lists\n",
+			      krp.kp.symbol_name);
+			return -EINVAL;
+		}
 	}
 	
-	rc = register_kretprobe(&krp_kmem_cache_alloc);
-	if (rc < 0) {
-		printk(KERN_ERR "register_kretprobe() failed.\n");
-		goto unreg_kern;
-	}
-
-	rc = register_kretprobe(&krp___kmalloc);
-	if (rc < 0) {
-		printk(KERN_ERR "register_kretprobe() failed.\n");
-		goto unreg_kmem;
-	}
-
-	rc = register_kretprobe(&krp_vmalloc);
-	if (rc < 0) {
-		printk(KERN_ERR "register_kretprobe() failed.\n");
-		goto unreg___km;
-	}
-
-	rc = register_kretprobe(&krp_vmalloc_user);
-	if (rc < 0) {
-		printk(KERN_ERR "register_kretprobe() failed.\n");
-		goto unreg_vm;
-	}*/
-
-	rc = register_kretprobe(&krp_kthread_run);
-	if (rc < 0) {
-		printk(KERN_ERR "register_kretprobe() failed.\n");
-	}
-
-	return 0;
-unreg_vm:
-	unregister_kretprobe(&krp_vmalloc);
-unreg___km:
-	unregister_kretprobe(&krp___kmalloc);
-unreg_kmem:
-	unregister_kretprobe(&krp_kmem_cache_alloc);
-unreg_kern:
-	unregister_kretprobe(&krp_kern_path);
-unreg_tgt:
-	unregister_kretprobe(&krp_tgt);
-out:
 	return rc;
 }
 
 static void __exit injector_exit(void)
 {
-/*	unregister_kretprobe(&krp_vmalloc_user);
-	unregister_kretprobe(&krp_vmalloc);
-	unregister_kretprobe(&krp___kmalloc);
-	unregister_kretprobe(&krp_kmem_cache_alloc);
-	unregister_kretprobe(&krp_kern_path);
-	unregister_kretprobe(&krp_tgt);
-*/
-
-	unregister_kretprobe(&krp_kthread_run);
+	/*TODO unregister device */
+	;
 }
 
 module_init(injector_init);

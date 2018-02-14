@@ -1,4 +1,7 @@
 obj-m := injector.o
+injector-y :=	injector.o \
+		mem.o
+
 
 KERNEL_DIR := /lib/modules/`uname -r`/build
 VERBOSE = 0

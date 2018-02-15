@@ -1,6 +1,5 @@
-#ifndef _INJECT_H
-#define _INJECT_H
-
+#ifndef _INJECTOR_H
+#define _INJECTOR_H
 
 struct fault_injector {
 	char	target[32];
@@ -16,6 +15,8 @@ struct fault_injector {
 
 bool is_target(void);
 
+extern struct kretprobe krp_kern_path;
+extern struct kretprobe krp_kthread_run;
 extern struct kretprobe krp_kmem_cache_alloc;
 extern struct kretprobe krp___kmalloc;
 extern struct kretprobe krp_vmalloc;

@@ -1,4 +1,5 @@
 #include <linux/slab.h>
+
 #include "injector.h"
 
 int ent_kmem_cache_alloc(struct kretprobe_instance *ri, struct pt_regs *regs)

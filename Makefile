@@ -1,6 +1,6 @@
 obj-m := injector.o
-injector-y :=	injector.o \
-		memory.o
+injector-y :=	memory.o	\
+		main.o
 
 
 KERNEL_DIR := /lib/modules/`uname -r`/build

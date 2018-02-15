@@ -48,16 +48,21 @@ bool is_target(void)
 {
 //	struct task_struct *task = NULL;
 //	int i = 0;
-
+	
 	if (!current->mm)
 		return 0;
 
 /*	while (fis[i].task != NULL) {
 		if (fis[i].task == current) {
+=======
+	while (tasks[i] != NULL) {
+		if (tasks[i] == current) {
+>>>>>>> 5bc6e1f11db79c6d3142b3bd659564be578ce039
 			task = current;
 			break;
 		}
 		i++;
+<<<<<<< HEAD
 	}*/
 	if (fis[0].task != current)
 		return 0;

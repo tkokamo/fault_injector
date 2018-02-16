@@ -18,5 +18,5 @@ while read -r line || [[ -n "${line}" ]] ; do
 	i=$i+1
 done < "${1}"
 
-./inject_fault ${args[0]} ${args[1]} ${args[2]} ${args[3]}
+./inject_fault "${args[0]}" "${args[1]}" "${args[2]}" "${args[3]}" "${args[4]}"
 

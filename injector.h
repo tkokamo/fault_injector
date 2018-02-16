@@ -4,6 +4,7 @@
 struct fault_injector {
 	char	target[32];
 	char	fault[32];
+	char	comm[32];
 	int	when;
 	int	error;
 };

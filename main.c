@@ -46,32 +46,20 @@ struct kretprobe *fault_lists[] = {
 
 bool is_target(void)
 {
-//	struct task_struct *task = NULL;
-//	int i = 0;
-	
 	if (!current->mm)
 		return 0;
 
-/*	while (fis[i].task != NULL) {
-		if (fis[i].task == current) {
-=======
-	while (tasks[i] != NULL) {
-		if (tasks[i] == current) {
->>>>>>> 5bc6e1f11db79c6d3142b3bd659564be578ce039
-			task = current;
-			break;
-		}
-		i++;
-<<<<<<< HEAD
-	}*/
-	if (fis[0].task != current)
+	if (fis[0].task == NULL &&
+			strcmp(current->comm, fis[0].fi->comm))
 		return 0;
 
-/*	if (task == NULL)
-		return 0;*/
+	if (fis[0].task != NULL && fis[0].task != current)
+		return 0;
 
 	if (++(fis[0].when) < (fis[0].fi->when))
 		return 0;
+
+	printk("%s\n", fis[0].fi->comm);
 
 	return 1;
 }
@@ -165,11 +153,6 @@ static int ret_tgt(struct kretprobe_instance *ri, struct pt_regs *regs)
 	return 0;
 }
 
-static struct kretprobe krp_tgt = {
-	.handler		= ret_tgt,
-	.entry_handler		= ent_tgt,
-};
-
 static int inject_fault(unsigned long arg)
 {
 	int rc = 0;
@@ -177,6 +160,7 @@ static int inject_fault(unsigned long arg)
 	int num;
 	struct fault_injector *fi;
 	struct kretprobe *krp = NULL;
+	struct kretprobe *target = NULL, *fault = NULL;
 
 	fi = kmalloc(sizeof(struct fault_injector), GFP_KERNEL);
 	if (fi == NULL) {
@@ -192,6 +176,12 @@ static int inject_fault(unsigned long arg)
 	}
 	fis[0].fi = fi;
 
+	if (strlen(fi->target) == 0 && strlen(fi->comm) == 0) {
+		printk("At least you should specify target function or command\n");
+		rc = -EINVAL;
+		goto free_fi;
+	}
+
 	num = sizeof(fault_lists) / sizeof(struct kretprobe *);
 	for (i = 0; i < num; i++) {
 		krp = fault_lists[i];
@@ -206,25 +196,51 @@ static int inject_fault(unsigned long arg)
 		goto free_fi;
 	}
 
-	rc = register_kretprobe(krp);
-	if (rc < 0) {
-		printk("registering fault function failed.\n");
+	fault = (struct kretprobe *)kmalloc(sizeof(*fault), GFP_KERNEL);
+	if (fault == NULL) {
+		printk("kmalloc() fault failed.\n");
+		rc = -ENOMEM;
 		goto free_fi;
 	}
+	target = (struct kretprobe *)kmalloc(sizeof(*target), GFP_KERNEL);
+	if (target == NULL) {
+		printk("kmalloc() target failed.\n");
+		rc = -ENOMEM;
+		goto free_fault;
+	}
 
-	krp_tgt.kp.symbol_name = fi->target;
-	rc = register_kretprobe(&krp_tgt);
+	memcpy(fault, krp, sizeof(*fault));
+	
+	rc = register_kretprobe(fault);
 	if (rc < 0) {
-		printk("registering target function failed.\n");
-		goto unreg_krp;
+		printk("registering fault function failed.\n");
+		goto free_target;
+	}
+
+	if (strlen(fi->target) != 0) {
+		memset(target, 0, sizeof(*target));
+		target->kp.symbol_name = fi->target;
+		target->handler = ret_tgt;
+		target->entry_handler = ent_tgt;
+		rc = register_kretprobe(target);
+		if (rc < 0) {
+			printk("registering target function failed.\n");
+			goto unreg_krp;
+		}
 	}
 
 	atomic_set(&done, 0);
 	wait_event_interruptible(tgtq, atomic_read(&done));
 
-	unregister_kretprobe(&krp_tgt);
+	if (strlen(fi->target) != 0) {
+		unregister_kretprobe(target);
+	}
 unreg_krp:
-	unregister_kretprobe(krp);
+	unregister_kretprobe(fault);
+free_target:
+	kfree(target);
+free_fault:
+	kfree(fault);
 free_fi:
 	fis[0].fi = NULL;
 	kfree(fi);

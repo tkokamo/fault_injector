@@ -14,8 +14,8 @@ int main(int argc, char **argv)
 	int fd, rc;
 	struct fault_injector fi;
 
-	if (argc < 5) {
-		fprintf(stderr, "Usage: %s <target> <fault> <when> <error>\n", argv[0]);
+	if (argc < 6) {
+		fprintf(stderr, "Usage: %s <target> <fault> <comm> <when> <error>\n", argv[0]);
 		exit(1);
 	}
 	
@@ -27,8 +27,9 @@ int main(int argc, char **argv)
 
 	strcpy(fi.target, argv[1]);
 	strcpy(fi.fault, argv[2]);
-	fi.when = atoi(argv[3]);
-	fi.error = atoi(argv[4]);
+	strcpy(fi.comm, argv[3]);
+	fi.when = atoi(argv[4]);
+	fi.error = atoi(argv[5]);
 
 	rc = ioctl(fd, INJECT_FAULT, &fi);
 	if (rc < 0) {

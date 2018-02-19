@@ -44,7 +44,7 @@ struct kretprobe *fault_lists[] = {
 	&krp_vmalloc_user,
 };
 
-bool is_target(void)
+bool is_target(struct pt_regs *regs)
 {
 	if (!current->mm)
 		return 0;
@@ -56,10 +56,22 @@ bool is_target(void)
 	if (fis[0].task != NULL && fis[0].task != current)
 		return 0;
 
+	if (strlen(fis[0].fi->module) != 0) {
+		struct module *mod;
+		void **sp = (void **)regs->sp;
+		void *ret = *sp;
+
+		preempt_disable();
+		mod = __module_address((unsigned long)ret);
+		if (mod == NULL || strcmp(mod->name, fis[0].fi->module)) {
+			preempt_enable();
+			return 0;
+		}
+		preempt_enable();
+	}
+
 	if (++(fis[0].when) < (fis[0].fi->when))
 		return 0;
-
-	printk("%s\n", fis[0].fi->comm);
 
 	return 1;
 }
@@ -68,7 +80,7 @@ static int ent_kern_path(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct path **ppath;
 
-	if (!is_target())
+	if (!is_target(regs))
 		return 1;
 
 	ppath = (struct path **)ri->data;
@@ -104,7 +116,7 @@ struct kretprobe krp_kern_path = {
 
 static int ent_kthread_run(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	if (!is_target())
+	if (!is_target(regs))
 		return 1;
 	return 0;
 }

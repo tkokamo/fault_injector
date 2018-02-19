@@ -5,6 +5,7 @@ struct fault_injector {
 	char	target[32];
 	char	fault[32];
 	char	comm[32];
+	char	module[32];
 	int	when;
 	int	error;
 };
@@ -14,7 +15,7 @@ struct fault_injector {
  #ifdef __KERNEL__
 #include <linux/kprobes.h>
 
-bool is_target(void);
+bool is_target(struct pt_regs *);
 
 extern struct kretprobe krp_proc_mkdir;
 extern struct kretprobe krp_proc_create_data;

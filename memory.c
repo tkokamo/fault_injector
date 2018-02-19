@@ -6,7 +6,7 @@ int ent_kmem_cache_alloc_trace(struct kretprobe_instance *ri, struct pt_regs *re
 {
 	struct kmem_cache **pcachep;
 
-	if (!is_target())
+	if (!is_target(regs))
 		return 1;
 
 	pcachep = (struct kmem_cache **)ri->data;
@@ -44,7 +44,7 @@ int ent_kmem_cache_alloc(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct kmem_cache **pcachep;
 
-	if (!is_target())
+	if (!is_target(regs))
 		return 1;
 
 	pcachep = (struct kmem_cache **)ri->data;
@@ -80,7 +80,7 @@ struct kretprobe krp_kmem_cache_alloc = {
 
 int ent___kmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	if (!is_target())
+	if (!is_target(regs))
 		return 1;
 
 	return 0;
@@ -109,7 +109,7 @@ struct kretprobe krp___kmalloc = {
 
 int ent___vmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	if (!is_target())
+	if (!is_target(regs))
 		return 1;
 	
 	return 0;
@@ -139,7 +139,7 @@ struct kretprobe krp___vmalloc = {
 
 int ent_vmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	if (!is_target())
+	if (!is_target(regs))
 		return 1;
 	
 	return 0;
@@ -169,7 +169,7 @@ struct kretprobe krp_vmalloc = {
 
 int ent_vmalloc_user(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	if (!is_target())
+	if (!is_target(regs))
 		return 1;
 	return 0;
 }

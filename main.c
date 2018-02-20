@@ -13,14 +13,8 @@
 
 #define FI_DEVNAME "fault_inject"
 
-struct fi_instance {
-	struct task_struct	*task;
-	struct fault_injector	*fi;
-	int			when;
-	bool			enter;
-};
 
-static struct fi_instance fis[1];
+struct fi_instance fis[1];
 static int num;
 
 static wait_queue_head_t tgtq;
@@ -32,9 +26,11 @@ struct class *fi_class;
 struct device *fi_dev;
 
 struct kretprobe *fault_lists[] = {
+	&krp_alloc_chrdev_region,
 	&krp_proc_mkdir,
 	&krp_proc_create_data,
 	&krp_kern_path,
+	&krp_d_path,
 	&krp_kthread_run,
 	&krp_kmem_cache_alloc_trace,
 	&krp_kmem_cache_alloc,
@@ -44,7 +40,7 @@ struct kretprobe *fault_lists[] = {
 	&krp_vmalloc_user,
 };
 
-bool is_target(void)
+bool is_target(struct pt_regs *regs)
 {
 	if (!current->mm)
 		return 0;
@@ -56,55 +52,29 @@ bool is_target(void)
 	if (fis[0].task != NULL && fis[0].task != current)
 		return 0;
 
+	if (strlen(fis[0].fi->module) != 0) {
+		struct module *mod;
+		void **sp = (void **)regs->sp;
+		void *ret = *sp;
+
+		preempt_disable();
+		mod = __module_address((unsigned long)ret);
+		if (mod == NULL || strcmp(mod->name, fis[0].fi->module)) {
+			preempt_enable();
+			return 0;
+		}
+		preempt_enable();
+	}
+
 	if (++(fis[0].when) < (fis[0].fi->when))
 		return 0;
-
-	printk("%s\n", fis[0].fi->comm);
 
 	return 1;
 }
 
-static int ent_kern_path(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	struct path **ppath;
-
-	if (!is_target())
-		return 1;
-
-	ppath = (struct path **)ri->data;
-	*ppath = (struct path *)regs->dx;
-
-	return 0;
-}
-
-static int ret_kern_path(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	struct path **ppath;
-	int rc = regs_return_value(regs);
-
-	if (rc < 0)
-		return 0;
-
-	ppath = (struct path **)ri->data;
-	path_put(*ppath);
-	regs->ax = -ENOMEM;
-
-	return 0;
-}
-
-struct kretprobe krp_kern_path = {
-	.handler		= ret_kern_path,
-	.entry_handler		= ent_kern_path,
-	.data_size		= sizeof(struct path *),
-	.maxactive		= 20,
-	.kp = {
-		.symbol_name    = "kern_path",
-	},
-};
-
 static int ent_kthread_run(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	if (!is_target())
+	if (!is_target(regs))
 		return 1;
 	return 0;
 }
@@ -117,7 +87,7 @@ static int ret_kthread_run(struct kretprobe_instance *ri, struct pt_regs *regs)
 		return 0;
 
 	kthread_stop(rp);
-	regs->ax = (unsigned long)ERR_PTR(-ENOMEM);
+	regs->ax = (unsigned long)ERR_PTR(fis[0].fi->error);
 
 	return 0;
 }
@@ -245,6 +215,8 @@ free_fi:
 	fis[0].fi = NULL;
 	kfree(fi);
 out:
+	fis[0].task = NULL;
+	fis[0].when = 0;
 	return rc;
 }
 

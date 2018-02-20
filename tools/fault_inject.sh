@@ -12,11 +12,24 @@ if [[ ${?} -ne 0 ]] ; then
 fi
 
 args=()
-i=0
 while read -r line || [[ -n "${line}" ]] ; do
-	args[${i}]="$(echo ${line} | cut -d'=' -f2)"
-	i=$i+1
+	key="$(echo ${line} | cut -d'=' -f1)"
+	val="$(echo ${line} | cut -d'=' -f2)"
+	case ${key} in
+	"target")
+		args[0]=${val};;
+	"fault")
+		args[1]=${val};;
+	"comm")
+		args[2]=${val};;
+	"module")
+		args[3]=${val};;
+	"when")
+		args[4]=${val};;
+	"error")
+		args[5]=${val};;
+	esac
 done < "${1}"
 
-./inject_fault "${args[0]}" "${args[1]}" "${args[2]}" "${args[3]}" "${args[4]}"
+./inject_fault "${args[0]}" "${args[1]}" "${args[2]}" "${args[3]}" "${args[4]}" "${args[5]}"
 

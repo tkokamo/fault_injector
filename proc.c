@@ -11,7 +11,7 @@ int ent_proc_mkdir(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct proc_fault_info *ppfi;
 
-	if (!is_target())
+	if (!is_target(regs))
 		return 1;
 
 	ppfi = (struct proc_fault_info *)ri->data;
@@ -51,7 +51,7 @@ int ent_proc_create_data(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct proc_fault_info *ppfi;
 
-	if (!is_target())
+	if (!is_target(regs))
 		return 1;
 
 	ppfi = (struct proc_fault_info *)ri->data;

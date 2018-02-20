@@ -1,6 +1,8 @@
 obj-m := injector.o
 injector-y :=	memory.o	\
 		proc.o		\
+		path.o		\
+		device.o	\
 		main.o
 
 

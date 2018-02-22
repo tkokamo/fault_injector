@@ -13,9 +13,7 @@
 
 #define FI_DEVNAME "fault_inject"
 
-
-struct fi_instance fis[1];
-static int num;
+struct fi_instance fis[NUM_FIS];
 
 static wait_queue_head_t tgtq;
 atomic_t done;
@@ -26,55 +24,95 @@ struct class *fi_class;
 struct device *fi_dev;
 
 struct kretprobe *fault_lists[] = {
+	&krp_device_create,
+	&krp_class_create,
+	&krp_cdev_add,
 	&krp_alloc_chrdev_region,
 	&krp_proc_mkdir,
 	&krp_proc_create_data,
 	&krp_kern_path,
 	&krp_d_path,
 	&krp_kthread_run,
+	&krp_kmem_cache_create,
 	&krp_kmem_cache_alloc_trace,
 	&krp_kmem_cache_alloc,
+	&krp___get_free_pages,
+	&krp___kmalloc_node,
 	&krp___kmalloc,
 	&krp_vmalloc,
 	&krp___vmalloc,
 	&krp_vmalloc_user,
 };
 
-bool is_target(struct pt_regs *regs)
+int get_errno(const char *fn)
 {
+	int i;
+
+	for (i = 0; i < NUM_FIS; i++) {
+		if (fis[i].fi == NULL)
+			continue;
+
+		if (strcmp(fn, fis[i].fi->fault) == 0)
+			return fis[i].fi->error;
+	}
+
+	return 0;
+}
+
+bool is_target(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	int i = 0;
+
 	if (!current->mm)
 		return 0;
 
-	if (fis[0].task == NULL &&
-			strcmp(current->comm, fis[0].fi->comm))
-		return 0;
+	for (i = 0; i < NUM_FIS; i++) {
+		if (fis[i].fi == NULL)
+			continue;
 
-	if (fis[0].task != NULL && fis[0].task != current)
-		return 0;
+		if (fis[i].task == NULL &&
+				strcmp(current->comm, fis[i].fi->comm))
+			continue;
 
-	if (strlen(fis[0].fi->module) != 0) {
-		struct module *mod;
-		void **sp = (void **)regs->sp;
-		void *ret = *sp;
+		if (fis[i].task != NULL && fis[i].task != current)
+			continue;
 
-		preempt_disable();
-		mod = __module_address((unsigned long)ret);
-		if (mod == NULL || strcmp(mod->name, fis[0].fi->module)) {
+		if (strlen(fis[i].fi->module) != 0) {
+			struct module *mod;
+			void **sp = (void **)regs->sp;
+			void *ret = *sp;
+
+			preempt_disable();
+			mod = __module_address((unsigned long)ret);
+			if (mod == NULL || strcmp(mod->name, fis[i].fi->module)) {
+				preempt_enable();
+				continue;
+			}
 			preempt_enable();
-			return 0;
 		}
-		preempt_enable();
+
+		if (strcmp(fis[i].fi->fault, ri->rp->kp.symbol_name))
+			continue;
+
+		if (fis[i].fi->trace) {
+			void **sp = (void **)regs->sp;
+			void *ret = *sp;
+
+			printk("%s called @ %pS\n", fis[i].fi->fault, ret);
+		}
+
+		if (++(fis[i].when) < (fis[i].fi->when))
+			continue;
+
+		return 1;
 	}
 
-	if (++(fis[0].when) < (fis[0].fi->when))
-		return 0;
-
-	return 1;
+	return 0;
 }
 
 static int ent_kthread_run(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	if (!is_target(regs))
+	if (!is_target(ri, regs))
 		return 1;
 	return 0;
 }
@@ -103,34 +141,67 @@ struct kretprobe krp_kthread_run = {
 
 static int ent_tgt(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
+	int i;
+
 	if (fis[0].task != NULL)
 		return 1;
 
-	fis[0].task = current;
-	fis[0].when = 0;
-	num++;
+	for (i = 0; i < NUM_FIS; i++) {
+		fis[i].task = current;
+		fis[i].when = 0;
+	}
+
+	printk("### ENTER %s\n", ri->rp->kp.symbol_name);
+
 	return 0;
 }
 
 static int ret_tgt(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	num--;
-	fis[0].task = NULL;
-	fis[0].when = 0;
-	
+	int i;
+
+	for (i = 0; i < NUM_FIS; i++) {
+		fis[i].task = NULL;
+		fis[i].when = 0;
+	}
+
 	atomic_set(&done, 1);
 	wake_up(&tgtq);
+	
+	printk("### EXIT %s\n", ri->rp->kp.symbol_name);
+
 	return 0;
+}
+
+static int find_empty_fis(void)
+{
+	int i;
+
+	for (i = 0; i < NUM_FIS; i++) {
+		if (fis[i].fi == NULL)
+			return i;
+	}
+
+	return -1;
 }
 
 static int inject_fault(unsigned long arg)
 {
 	int rc = 0;
+	int fis_idx;
 	int i;
 	int num;
 	struct fault_injector *fi;
 	struct kretprobe *krp = NULL;
 	struct kretprobe *target = NULL, *fault = NULL;
+
+	fis_idx = find_empty_fis();
+	if (fis_idx < 0) {
+		printk("Too many fis enties.\n");
+		rc = -E2BIG;
+		goto out;
+	}
+	memset(&fis[fis_idx], 0, sizeof(struct fi_instance));
 
 	fi = kmalloc(sizeof(struct fault_injector), GFP_KERNEL);
 	if (fi == NULL) {
@@ -144,7 +215,7 @@ static int inject_fault(unsigned long arg)
 		rc = -EFAULT;
 		goto free_fi;
 	}
-	fis[0].fi = fi;
+	fis[fis_idx].fi = fi;
 
 	if (strlen(fi->target) == 0 && strlen(fi->comm) == 0) {
 		printk("At least you should specify target function or command\n");
@@ -212,11 +283,11 @@ free_target:
 free_fault:
 	kfree(fault);
 free_fi:
-	fis[0].fi = NULL;
 	kfree(fi);
+	fis[fis_idx].fi = NULL;
+	fis[fis_idx].task = NULL;
+	fis[fis_idx].when = 0;
 out:
-	fis[0].task = NULL;
-	fis[0].when = 0;
 	return rc;
 }
 

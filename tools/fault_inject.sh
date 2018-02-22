@@ -28,8 +28,10 @@ while read -r line || [[ -n "${line}" ]] ; do
 		args[4]=${val};;
 	"error")
 		args[5]=${val};;
+	"trace")
+		args[6]=${val};;
 	esac
 done < "${1}"
 
-./inject_fault "${args[0]}" "${args[1]}" "${args[2]}" "${args[3]}" "${args[4]}" "${args[5]}"
+./inject_fault "${args[0]}" "${args[1]}" "${args[2]}" "${args[3]}" "${args[4]}" "${args[5]}" "${args[6]}"
 

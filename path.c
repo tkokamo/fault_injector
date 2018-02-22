@@ -4,7 +4,7 @@ static int ent_kern_path(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct path **ppath;
 
-	if (!is_target(regs))
+	if (!is_target(ri, regs))
 		return 1;
 
 	ppath = (struct path **)ri->data;
@@ -23,7 +23,7 @@ static int ret_kern_path(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	ppath = (struct path **)ri->data;
 	path_put(*ppath);
-	regs->ax = fis[0].fi->error;
+	regs->ax = get_errno(ri->rp->kp.symbol_name);
 
 	return 0;
 }
@@ -40,7 +40,7 @@ struct kretprobe krp_kern_path = {
 
 static int ent_d_path(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	if (!is_target(regs))
+	if (!is_target(ri, regs))
 		return 1;
 
 	return 0;
@@ -53,7 +53,7 @@ static int ret_d_path(struct kretprobe_instance *ri, struct pt_regs *regs)
 	if (rc < 0)
 		return 0;
 
-	regs->ax = fis[0].fi->error;
+	regs->ax = get_errno(ri->rp->kp.symbol_name);
 
 	return 0;
 }

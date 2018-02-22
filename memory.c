@@ -2,11 +2,110 @@
 
 #include "injector.h"
 
+int ent___get_free_pages(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	unsigned int *porder;
+
+	if (!is_target(ri, regs))
+		return 1;
+	
+	porder = (unsigned int *)ri->data;
+	*porder = regs->si;
+
+	return 0;
+}
+
+int ret___get_free_pages(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	unsigned int *porder;
+	unsigned long rp = regs_return_value(regs);
+
+	if (rp == (unsigned long)NULL)
+		return 0;
+
+	porder = (unsigned int *)ri->data;
+
+	free_pages(rp, *porder);
+	regs->ax = (unsigned long)NULL;
+
+	return 0;
+}
+
+struct kretprobe krp___get_free_pages = {
+	.handler		= ret___get_free_pages,
+	.entry_handler		= ent___get_free_pages,
+	.maxactive		= 20,
+	.data_size		= sizeof(unsigned int),
+	.kp = {
+		.symbol_name    = "__get_free_pages",
+	},
+};
+
+int ent___kmalloc_node(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	if (!is_target(ri, regs))
+		return 1;
+	
+	return 0;
+}
+
+int ret___kmalloc_node(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct kmem_cache *rp = (struct kmem_cache *)regs_return_value(regs);
+
+	if (rp == NULL)
+		return 0;
+
+	kfree(rp);
+	regs->ax = (unsigned long)NULL;
+
+	return 0;
+}
+
+struct kretprobe krp___kmalloc_node = {
+	.handler		= ret___kmalloc_node,
+	.entry_handler		= ent___kmalloc_node,
+	.maxactive		= 20,
+	.kp = {
+		.symbol_name    = "__kmalloc_node",
+	},
+};
+
+int ent_kmem_cache_create(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	if (!is_target(ri, regs))
+		return 1;
+	
+	return 0;
+}
+
+int ret_kmem_cache_create(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct kmem_cache *rp = (struct kmem_cache *)regs_return_value(regs);
+
+	if (rp == NULL)
+		return 0;
+
+	kmem_cache_destroy(rp);
+	regs->ax = (unsigned long)NULL;
+
+	return 0;
+}
+
+struct kretprobe krp_kmem_cache_create = {
+	.handler		= ret_kmem_cache_create,
+	.entry_handler		= ent_kmem_cache_create,
+	.maxactive		= 20,
+	.kp = {
+		.symbol_name    = "kmem_cache_create",
+	},
+};
+
 int ent_kmem_cache_alloc_trace(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct kmem_cache **pcachep;
 
-	if (!is_target(regs))
+	if (!is_target(ri, regs))
 		return 1;
 
 	pcachep = (struct kmem_cache **)ri->data;
@@ -44,7 +143,7 @@ int ent_kmem_cache_alloc(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct kmem_cache **pcachep;
 
-	if (!is_target(regs))
+	if (!is_target(ri, regs))
 		return 1;
 
 	pcachep = (struct kmem_cache **)ri->data;
@@ -80,7 +179,7 @@ struct kretprobe krp_kmem_cache_alloc = {
 
 int ent___kmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	if (!is_target(regs))
+	if (!is_target(ri, regs))
 		return 1;
 
 	return 0;
@@ -101,7 +200,7 @@ int ret___kmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
 struct kretprobe krp___kmalloc = {
 	.handler		= ret___kmalloc,
 	.entry_handler		= ent___kmalloc,
-	.maxactive		= 20,
+	.maxactive		= 1,
 	.kp = {
 		.symbol_name    = "__kmalloc",
 	},
@@ -109,7 +208,7 @@ struct kretprobe krp___kmalloc = {
 
 int ent___vmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	if (!is_target(regs))
+	if (!is_target(ri, regs))
 		return 1;
 	
 	return 0;
@@ -139,7 +238,7 @@ struct kretprobe krp___vmalloc = {
 
 int ent_vmalloc(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	if (!is_target(regs))
+	if (!is_target(ri, regs))
 		return 1;
 	
 	return 0;
@@ -169,7 +268,7 @@ struct kretprobe krp_vmalloc = {
 
 int ent_vmalloc_user(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	if (!is_target(regs))
+	if (!is_target(ri, regs))
 		return 1;
 	return 0;
 }
